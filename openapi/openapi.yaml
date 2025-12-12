@@ -1,0 +1,319 @@
+openapi: 3.0.3
+info:
+  title: Tempus letter broker - Letter Management API
+  description: |
+    Thin API layer deployed in CICA's AWS that provides letter management
+    capabilities to Tempus. This service handles preview PDF generation and
+    asynchronously delegates send/delete operations the CICA letter service.
+  version: 1.0.0
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com/prod
+    variables:
+      apiId:
+        default: xxxxxxxxxx
+        description: API Gateway ID
+      region:
+        default: us-east-1
+        description: AWS Region
+paths:
+  /letters/{userId}:
+    delete:
+      operationId: deleteAllLettersForUser
+      summary: Delete all letters for a user
+      description: |
+        Enqueues a DELETE command to remove all letters associated with the given user.
+        This operation is asynchronous.
+      tags:
+        - Letters
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: Delete command successfully queued
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /letters/{userId}/{caseReferenceNumber}:
+    delete:
+      operationId: deleteAllLettersForCase
+      summary: Delete all letters for a case
+      description: |
+        Enqueues a DELETE command to remove all letters associated with the given
+        user and case reference number. This operation is asynchronous.
+      tags:
+        - Letters
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CaseReferenceNumber'
+      responses:
+        '204':
+          description: Delete command successfully queued
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /letters/{userId}/{caseReferenceNumber}/{letterId}:
+    delete:
+      operationId: deleteLetter
+      summary: Delete a specific letter
+      description: |
+        Enqueues a DELETE command to remove a specific letter. This operation is
+        idempotent and asynchronous.
+      tags:
+        - Letters
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CaseReferenceNumber'
+        - $ref: '#/components/parameters/LetterId'
+      responses:
+        '204':
+          description: Delete command successfully queued
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /letters/{userId}/{caseReferenceNumber}/{letterId}/send:
+    post:
+      operationId: sendLetter
+      summary: Send a letter
+      description: |
+        Stores the letter JSON in the Letters bucket in the Cloud Platform and enqueues a SEND
+        command for Cica letter service to process.
+      tags:
+        - Letters
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CaseReferenceNumber'
+        - $ref: '#/components/parameters/LetterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendLetterRequest'
+      responses:
+        '200':
+          description: Letter successfully queued for sending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendLetterResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /letters/{userId}/{caseReferenceNumber}/{letterId}/pdf:
+    post:
+      operationId: generateLetterPdf
+      summary: Generate a preview PDF
+      description: |
+        Generates a PDF preview of the letter and stores it in the Tmpus documents bucket. Returns the S3 URI of the generated PDF.
+      tags:
+        - Letters
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/CaseReferenceNumber'
+        - $ref: '#/components/parameters/LetterId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateLetterRequest'
+      responses:
+        '201':
+          description: PDF successfully generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateLetterResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      description: Unique identifier for the user
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    CaseReferenceNumber:
+      name: caseReferenceNumber
+      in: path
+      required: true
+      description: Case reference number associated with the letter(s)
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    LetterId:
+      name: letterId
+      in: path
+      required: true
+      description: Unique identifier for the letter
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  schemas:
+    LetterData:
+      type: object
+      description: Dynamic letter content data
+      additionalProperties: true
+      example:
+        recipientName: Test Testcase
+        recipientAddress:
+          street: 10 Clyde Place
+          street2: Buchanan Wharf
+          town: Glasgow
+          postcode: G5 8AQ
+        content: This is the letter content.
+    LetterBase:
+      type: object
+      description: Base letter properties shared across operations
+      properties:
+        letterType:
+          type: string
+          description: Type of letter
+          example: AA01
+        letterData:
+          $ref: '#/components/schemas/LetterData'
+      required:
+        - letterType
+        - letterData
+    LetterResource:
+      type: object
+      description: Full letter resource representation
+      allOf:
+        - $ref: '#/components/schemas/LetterBase'
+        - type: object
+          properties:
+            letterId:
+              type: string
+              description: Unique identifier for the letter
+            userId:
+              type: string
+              description: User ID associated with the letter
+            caseReferenceNumber:
+              type: string
+              description: Case reference number
+            contactPreference:
+              type: string
+              enum:
+                - E
+                - T
+              description: Preferred contact method
+            userEmail:
+              type: string
+              format: email
+              description: User's email address
+            userPhone:
+              type: string
+              description: User's phone number
+            createdAt:
+              type: string
+              format: date-time
+              description: Timestamp when the letter was created
+    GenerateLetterRequest:
+      type: object
+      description: Request body for generating a letter PDF
+      allOf:
+        - $ref: '#/components/schemas/LetterBase'
+        - type: object
+          properties:
+            isPreview:
+              type: boolean
+              default: true
+              description: |
+                Whether this is a preview generation.
+          required:
+            - isPreview
+    GenerateLetterResponse:
+      type: object
+      description: Response after successfully generating a letter PDF
+      properties:
+        letterId:
+          type: string
+          description: The letter ID for which the PDF was generated
+        uri:
+          type: string
+          description: S3 URI of the generated PDF
+          example: s3://preview-bucket/preview/user123/case456/letter789-1699900000000.pdf
+      required:
+        - letterId
+        - uri
+    SendLetterRequest:
+      type: object
+      description: Request body for sending a letter
+      allOf:
+        - $ref: '#/components/schemas/LetterBase'
+        - type: object
+          properties:
+            contactPreference:
+              type: string
+              enum:
+                - E
+                - T
+              description: How the recipient should be contacted
+            userEmail:
+              type: string
+              format: email
+              description: Email address
+            userPhone:
+              type: string
+              description: Phone number
+          required:
+            - contactPreference
+    SendLetterResponse:
+      type: object
+      description: Response after successfully queuing a letter for sending
+      properties:
+        letterId:
+          type: string
+          description: The letter ID that was queued
+      required:
+        - letterId
+    ErrorResponse:
+      type: object
+      description: Standard error response
+      properties:
+        message:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+      required:
+        - message
