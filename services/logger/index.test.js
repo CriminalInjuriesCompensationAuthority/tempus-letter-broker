@@ -1,143 +1,164 @@
-import { jest, describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 
-let logger, LOG_LEVELS;
+const MODULE_PATH = "./index.js";
 
-describe("Logger Service", () => {
-    let consoleLogSpy;
-    let consoleWarnSpy;
-    let consoleErrorSpy;
+async function importFreshLoggerModule() {
+    return import(`${MODULE_PATH}?t=${Date.now()}-${Math.random()}`);
+}
+
+function captureWrites(writeMock) {
+    return writeMock.mock.calls.map((c) => {
+        const chunk = c.arguments[0];
+        return Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    });
+}
+
+function parseJsonLines(texts) {
+    const lines = texts
+        .flatMap((t) => t.split("\n"))
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+    return lines.map((line) => JSON.parse(line));
+}
+
+function getAllLogEntries(stdoutWriteMock, stderrWriteMock) {
+    const out = parseJsonLines(captureWrites(stdoutWriteMock));
+    const err = parseJsonLines(captureWrites(stderrWriteMock));
+    return [...out, ...err];
+}
+
+test("Logger Service (pino)", async (t) => {
     const originalEnv = process.env.LOG_LEVEL;
 
-    beforeEach(() => {
-        consoleLogSpy = jest.spyOn(console, "log").mockImplementation(() => {});
-        consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
-        consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    let stdoutWriteMock;
+    let stderrWriteMock;
+
+    t.beforeEach(() => {
+        stdoutWriteMock = mock.method(process.stdout, "write", () => true);
+        stderrWriteMock = mock.method(process.stderr, "write", () => true);
     });
 
-    afterEach(() => {
-        consoleLogSpy.mockRestore();
-        consoleWarnSpy.mockRestore();
-        consoleErrorSpy.mockRestore();
+    t.afterEach(() => {
+        stdoutWriteMock.mock.restore();
+        stderrWriteMock.mock.restore();
         process.env.LOG_LEVEL = originalEnv;
-        jest.resetModules()
     });
 
-    describe("with LOG_LEVEL=INFO (default)", () => {
-        beforeEach(async () => {
-            process.env.LOG_LEVEL = "INFO";
-            jest.resetModules();
-            const module = await import("./index.js");
-            logger = module.logger;
-            LOG_LEVELS = module.LOG_LEVELS;
-        });
+    await t.test("with LOG_LEVEL=INFO", async (t2) => {
+        process.env.LOG_LEVEL = "info";
+        const { logger } = await importFreshLoggerModule();
 
-        it("should NOT log debug messages", () => {
+        await t2.test("should NOT log debug messages", () => {
             logger.debug("debug message", { foo: "bar" });
-            expect(consoleLogSpy).not.toHaveBeenCalled();
+
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            assert.equal(all.length, 0);
         });
 
-        it("should log info messages", () => {
+        await t2.test("should log info messages", () => {
             logger.info("info message", { foo: "bar" });
-            expect(consoleLogSpy).toHaveBeenCalledTimes(1);
 
-            const loggedJson = JSON.parse(consoleLogSpy.mock.calls[0][0]);
-            expect(loggedJson.level).toBe("INFO");
-            expect(loggedJson.message).toBe("info message");
-            expect(loggedJson.foo).toBe("bar");
-            expect(loggedJson.timestamp).toBeDefined()
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            const entry = all.find((e) => e.msg === "info message");
+
+            assert.ok(entry, "Expected an info log entry");
+            assert.equal(entry.level, 30);
+            assert.equal(entry.foo, "bar");
+            assert.ok(typeof entry.time === "number");
         });
 
-        it("should log warn messages using console.warn", () => {
+        await t2.test("should log warn messages", () => {
             logger.warn("warning message");
-            expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
 
-            const loggedJson = JSON.parse(consoleWarnSpy.mock.calls[0][0]);
-            expect(loggedJson.level).toBe("WARN");
-            expect(loggedJson.message).toBe("warning message")
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            const entry = all.find((e) => e.msg === "warning message");
+
+            assert.ok(entry, "Expected a warn log entry");
+            assert.equal(entry.level, 40);
         });
 
-        it("should log error messages using console.error", () => {
+        await t2.test("should log error messages", () => {
             logger.error("error message", { errorCode: 500 });
-            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
 
-            const loggedJson = JSON.parse(consoleErrorSpy.mock.calls[0][0]);
-            expect(loggedJson.level).toBe("ERROR");
-            expect(loggedJson.message).toBe("error message");
-            expect(loggedJson.errorCode).toBe(500)
-        })
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            const entry = all.find((e) => e.msg === "error message");
+
+            assert.ok(entry, "Expected an error log entry");
+            assert.equal(entry.level, 50);
+            assert.equal(entry.errorCode, 500);
+        });
     });
 
-    describe("with LOG_LEVEL=DEBUG", () => {
-        beforeEach(async () => {
-            process.env.LOG_LEVEL = "DEBUG";
-            jest.resetModules();
-            const module = await import("./index.js");
-            logger = module.logger
-        });
+    await t.test("with LOG_LEVEL=DEBUG", async (t2) => {
+        process.env.LOG_LEVEL = "debug";
+        const { logger } = await importFreshLoggerModule();
 
-        it("should log debug messages", () => {
+        await t2.test("should log debug messages", () => {
             logger.debug("debug message", { detail: "value" });
-            expect(consoleLogSpy).toHaveBeenCalledTimes(1);
 
-            const loggedJson = JSON.parse(consoleLogSpy.mock.calls[0][0]);
-            expect(loggedJson.level).toBe("DEBUG");
-            expect(loggedJson.message).toBe("debug message");
-            expect(loggedJson.detail).toBe("value");
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            const entry = all.find((e) => e.msg === "debug message");
+
+            assert.ok(entry, "Expected a debug log entry");
+            assert.equal(entry.level, 20);
+            assert.equal(entry.detail, "value");
         });
 
-        it("should also log info, warn, and error messages", () => {
+        await t2.test("should also log info, warn, and error messages", () => {
             logger.info("info");
             logger.warn("warn");
             logger.error("error");
 
-            expect(consoleLogSpy).toHaveBeenCalledTimes(1);
-            expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
-            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
-        })
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+
+            assert.ok(all.some((e) => e.msg === "info" && e.level === 30));
+            assert.ok(all.some((e) => e.msg === "warn" && e.level === 40));
+            assert.ok(all.some((e) => e.msg === "error" && e.level === 50));
+        });
     });
 
-    describe("with LOG_LEVEL=ERROR", () => {
-        beforeEach(async () => {
-            process.env.LOG_LEVEL = "ERROR";
-            jest.resetModules();
-            const module = await import("./index.js");
-            logger = module.logger
-        });
+    await t.test("with LOG_LEVEL=ERROR", async (t2) => {
+        process.env.LOG_LEVEL = "error";
+        const { logger } = await importFreshLoggerModule();
 
-        it("should NOT log debug, info, or warn messages", () => {
+        await t2.test("should NOT log debug, info, or warn messages", () => {
             logger.debug("debug");
             logger.info("info");
             logger.warn("warn");
 
-            expect(consoleLogSpy).not.toHaveBeenCalled();
-            expect(consoleWarnSpy).not.toHaveBeenCalled();
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            assert.equal(all.length, 0);
         });
 
-        it("should log error messages", () => {
+        await t2.test("should log error messages", () => {
             logger.error("error message");
-            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            const entry = all.find((e) => e.msg === "error message");
+
+            assert.ok(entry);
+            assert.equal(entry.level, 50);
         });
     });
 
-    describe("JSON output format", () => {
-        beforeEach(async () => {
-            process.env.LOG_LEVEL = "DEBUG";
-            jest.resetModules();
-            const module = await import("./index.js");
-            logger = module.logger;
-        });
+    await t.test("JSON output format", async (t2) => {
+        process.env.LOG_LEVEL = "debug";
+        const { logger } = await importFreshLoggerModule();
 
-        it("should output valid JSON with required fields", () => {
+        await t2.test("should output valid JSON with required fields", () => {
             logger.info("test message", { customField: "value" });
 
-            const output = consoleLogSpy.mock.calls[0][0];
-            expect(() => JSON.parse(output)).not.toThrow();
+            const all = getAllLogEntries(stdoutWriteMock, stderrWriteMock);
+            const entry = all.find((e) => e.msg === "test message");
 
-            const parsed = JSON.parse(output);
-            expect(parsed).toHaveProperty("level");
-            expect(parsed).toHaveProperty("message");
-            expect(parsed).toHaveProperty("timestamp");
-            expect(parsed).toHaveProperty("customField");
+            assert.ok(entry);
+            assert.ok("level" in entry);
+            assert.ok("msg" in entry);
+            assert.ok("time" in entry);
+            assert.equal(entry.customField, "value");
         });
     });
 });

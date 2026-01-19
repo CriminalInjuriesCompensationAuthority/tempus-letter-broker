@@ -1,112 +1,153 @@
-jest.mock("@aws-sdk/client-sqs", () => ({
-    SQSClient: jest.fn().mockImplementation(() => ({
-        send: jest.fn(),
-    })),
-    SendMessageCommand: jest.fn(),
-}));
+// services/sqs/index.test.js
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import esmock from "esmock";
 
-jest.mock("../logger/index.js", () => ({
-    logger: {
-        info: jest.fn(),
-        warn: jest.fn(),
-        error: jest.fn(),
-        debug: jest.fn(),
-    },
-}));
+const MODULE_PATH = "./index.js";
+const LOGGER_PATH = "../logger/index.js";
 
-import { sendDeleteMessage, sendSendMessage } from "./index.js";
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+function makeAwsSqsFixtures({ sendImpl } = {}) {
+    const calls = [];
+    const sqsSend = mock.fn(sendImpl ?? (async () => undefined));
 
-describe("SQS service", () => {
-    let mockSqsSend;
+    class SQSClient {
+        constructor() {
+            this.send = sqsSend;
+        }
+    }
 
-    beforeEach(() => {
-        jest.clearAllMocks();
+    class SendMessageCommand {
+        constructor(input) {
+            this.input = input;
+            calls.push(input);
+        }
+    }
+
+    return { calls, sqsSend, SQSClient, SendMessageCommand };
+}
+
+function makeLoggerFixture() {
+    return {
+        info: mock.fn(),
+        warn: mock.fn(),
+        error: mock.fn(),
+        debug: mock.fn(),
+    };
+}
+
+async function loadSqsService({ SQSClient, SendMessageCommand, logger }) {
+    return esmock(MODULE_PATH, {
+        "@aws-sdk/client-sqs": { SQSClient, SendMessageCommand },
+        [LOGGER_PATH]: { logger },
+    });
+}
+
+test("SQS service", async (t) => {
+    const originalQueueUrl = process.env.LETTER_QUEUE_URL;
+
+    t.beforeEach(() => {
         process.env.LETTER_QUEUE_URL = "https://sqs.example.com/letters";
-        mockSqsSend = SQSClient.mock.results[0].value.send;
     });
 
-    it("sends a DELETE message with correct payload and attributes", async () => {
-        const payload = {
-            userId: "user-1",
-            caseReferenceNumber: "case-1",
-            letterId: "letter-1",
-        };
+    t.afterEach(() => {
+        process.env.LETTER_QUEUE_URL = originalQueueUrl;
+    });
 
-        await sendDeleteMessage(payload);
+    await t.test("sends a DELETE message with correct payload and attributes", async () => {
+        const { calls, sqsSend, SQSClient, SendMessageCommand } = makeAwsSqsFixtures();
+        const logger = makeLoggerFixture();
 
-        const commandInput = {
-            QueueUrl: "https://sqs.example.com/letters",
-            MessageBody: expect.stringContaining('"type":"DELETE"'),
-            MessageAttributes: {
-                MessageType: {
-                    DataType: "String",
-                    StringValue: "DELETE",
-                },
-            },
-        };
+        const { sendDeleteMessage } = await loadSqsService({
+            SQSClient,
+            SendMessageCommand,
+            logger,
+        });
 
-        expect(SendMessageCommand).toHaveBeenCalledWith(expect.objectContaining(commandInput));
-
-        const passedMessageBody = JSON.parse(
-            SendMessageCommand.mock.calls[0][0].MessageBody
-        );
-
-        expect(passedMessageBody).toMatchObject({
-            type: "DELETE",
+        await sendDeleteMessage({
             userId: "user-1",
             caseReferenceNumber: "case-1",
             letterId: "letter-1",
         });
-        expect(new Date(passedMessageBody.requestedAt).toString()).not.toBe("Invalid Date");
-        expect(mockSqsSend).toHaveBeenCalledTimes(1);
+
+        assert.equal(calls.length, 1);
+        const cmd = calls[0];
+
+        assert.equal(cmd.QueueUrl, "https://sqs.example.com/letters");
+        assert.ok(cmd.MessageBody.includes('"type":"DELETE"'));
+        assert.deepEqual(cmd.MessageAttributes, {
+            MessageType: { DataType: "String", StringValue: "DELETE" },
+        });
+
+        const parsed = JSON.parse(cmd.MessageBody);
+        assert.equal(parsed.type, "DELETE");
+        assert.equal(parsed.userId, "user-1");
+        assert.equal(parsed.caseReferenceNumber, "case-1");
+        assert.equal(parsed.letterId, "letter-1");
+        assert.notEqual(new Date(parsed.requestedAt).toString(), "Invalid Date");
+
+        assert.equal(sqsSend.mock.calls.length, 1);
     });
 
-    it("sends a SEND message with correct payload and attributes", async () => {
-        const payload = {
-            userId: "user-2",
-            caseReferenceNumber: "case-2",
-            letterId: "letter-2",
-        };
+    await t.test("sends a SEND message with correct payload and attributes", async () => {
+        const { calls, sqsSend, SQSClient, SendMessageCommand } = makeAwsSqsFixtures();
+        const logger = makeLoggerFixture();
 
-        await sendSendMessage(payload);
+        const { sendSendMessage } = await loadSqsService({
+            SQSClient,
+            SendMessageCommand,
+            logger,
+        });
 
-        const commandInput = {
-            QueueUrl: "https://sqs.example.com/letters",
-            MessageBody: expect.stringContaining('"type":"SEND"'),
-            MessageAttributes: {
-                MessageType: {
-                    DataType: "String",
-                    StringValue: "SEND",
-                },
+        await sendSendMessage({
+            key: "letters/user-2/case-2/letter-2.json",
+        });
+
+        assert.equal(calls.length, 1);
+        const cmd = calls[0];
+
+        assert.equal(cmd.QueueUrl, "https://sqs.example.com/letters");
+        assert.ok(cmd.MessageBody.includes('"type":"SEND"'));
+        assert.deepEqual(cmd.MessageAttributes, {
+            MessageType: { DataType: "String", StringValue: "SEND" },
+        });
+
+        const parsed = JSON.parse(cmd.MessageBody);
+        assert.equal(parsed.type, "SEND");
+        assert.equal(parsed.key, "letters/user-2/case-2/letter-2.json");
+        assert.notEqual(new Date(parsed.requestedAt).toString(), "Invalid Date");
+
+        // Ensure DELETE fields are not accidentally present for SEND
+        assert.equal(parsed.userId, undefined);
+        assert.equal(parsed.caseReferenceNumber, undefined);
+        assert.equal(parsed.letterId, undefined);
+
+        assert.equal(sqsSend.mock.calls.length, 1);
+    });
+
+    await t.test("propagates errors from the SQS client", async () => {
+        const { calls, sqsSend, SQSClient, SendMessageCommand } = makeAwsSqsFixtures({
+            sendImpl: async () => {
+                throw new Error("SQS failed");
             },
-        };
+        });
+        const logger = makeLoggerFixture();
 
-        expect(SendMessageCommand).toHaveBeenCalledWith(expect.objectContaining(commandInput));
+        const { sendSendMessage } = await loadSqsService({
+            SQSClient,
+            SendMessageCommand,
+            logger,
+        });
 
-        const passedMessageBody = JSON.parse(
-            SendMessageCommand.mock.calls[0][0].MessageBody
+        await assert.rejects(
+            () => sendSendMessage({ key: "letters/u/c/l.json" }),
+            (err) => {
+                assert.equal(err?.message, "SQS failed");
+                return true;
+            }
         );
 
-        expect(passedMessageBody).toMatchObject({
-            type: "SEND",
-            userId: "user-2",
-            caseReferenceNumber: "case-2",
-            letterId: "letter-2",
-        });
-        expect(new Date(passedMessageBody.requestedAt).toString()).not.toBe("Invalid Date");
-        expect(mockSqsSend).toHaveBeenCalledTimes(1);
-    });
-
-    it("propagates errors from the SQS client", async () => {
-        mockSqsSend.mockRejectedValue(new Error("SQS failed"));
-
-        await expect(
-            sendSendMessage({
-                userId: "u",
-                caseReferenceNumber: "c",
-                letterId: "l",
-            })
-        ).rejects.toThrow("SQS failed");
+        assert.equal(calls.length, 1);
+        assert.equal(sqsSend.mock.calls.length, 1);
     });
 });
