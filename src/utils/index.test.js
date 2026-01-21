@@ -25,7 +25,7 @@ function makeFixtures() {
             },
             routes: { initial: "start" },
             sections: {
-                start: { sectionName: "StartSection" },
+                start: { schema: {sectionName: "StartSection" }},
             },
         },
     };
@@ -34,14 +34,13 @@ function makeFixtures() {
         info: mock.fn(),
     };
 
-    const letterBuilder = mock.fn(async (previewData) => ({
-        ok: true,
-        previewData,
-    }));
+    const getLetter = mock.fn(async () => Buffer.from("%PDF-1.4\nfake\n"));
+
+    const letterBuilder = { getLetter };
 
     const ajv = new Ajv({ allErrors: true });
 
-    return { templates, logger, letterBuilder, ajv };
+    return { templates, logger, letterBuilder, ajv, getLetter };
 }
 
 test("respond(): sets JSON headers, request id, and stringifies object body", () => {
@@ -267,9 +266,11 @@ test("parseAndValidateBodyWithDeps(): happy path returns parsed body", () => {
         contactPreference: "E",
         userEmail: "a@b.com",
     };
+    const expectedTemplate = templates[valid.letterType];
+    const expected = {body: valid, template: expectedTemplate};
 
     const parsed = parseAndValidateBodyWithDeps(JSON.stringify(valid), { templates, ajv });
-    assert.deepEqual(parsed, valid);
+    assert.deepEqual(parsed, expected);
 });
 
 test("parseAndValidateBodyWithDeps(): unsupported letterType throws ValidationError with supportedTypes", () => {
@@ -293,46 +294,32 @@ test("parseAndValidateBodyWithDeps(): unsupported letterType throws ValidationEr
     );
 });
 
-test("generatePdfWithDeps(): invalid JSON throws ValidationError", async () => {
-    const { templates, logger, letterBuilder } = makeFixtures();
-
-    await assert.rejects(
-        () => generatePdfWithDeps("{", "L-1", { templates, logger, letterBuilder }),
-        (e) => {
-            assert.ok(e instanceof ValidationError);
-            assert.equal(e.message, "Invalid JSON in request body");
-            return true;
-        }
-    );
-});
-
 test("generatePdfWithDeps(): missing letterType/letterData throws ValidationError", async () => {
-    const { templates, logger, letterBuilder } = makeFixtures();
+    const { logger, letterBuilder } = makeFixtures();
 
-    const noType = JSON.stringify({ letterData: { foo: "x" } });
+    const noType = { letterData: { foo: "x" } };
     await assert.rejects(
-        () => generatePdfWithDeps(noType, "L-1", { templates, logger, letterBuilder }),
+        () => generatePdfWithDeps(noType, "L-1", { logger, letterBuilder }),
         /letterType is required/
     );
 
-    const noData = JSON.stringify({ letterType: "tx45" });
+    const noData = { letterType: "tx45" };
     await assert.rejects(
-        () => generatePdfWithDeps(noData, "L-1", { templates, logger, letterBuilder }),
+        () => generatePdfWithDeps(noData, "L-1", { logger, letterBuilder }),
         /letterData is required/
     );
 });
 
 test("generatePdfWithDeps(): logs and calls letterBuilder with expected previewData", async () => {
-    const { templates, logger, letterBuilder } = makeFixtures();
+    const { templates, logger, letterBuilder, getLetter } = makeFixtures();
 
-    const payload = JSON.stringify({
+    const payload = {
         letterType: "tx45",
         letterData: { foo: "hello" },
-        isPreview: true,
-    });
+        isPreview: true
+    };
 
-    const result = await generatePdfWithDeps(payload, "LETTER-123", {
-        templates,
+    const result = await generatePdfWithDeps(payload, templates['tx45'], "LETTER-123", {
         logger,
         letterBuilder,
     });
@@ -343,59 +330,38 @@ test("generatePdfWithDeps(): logs and calls letterBuilder with expected previewD
         { letterType: "tx45", isPreview: true },
     ]);
 
-    assert.equal(letterBuilder.mock.calls.length, 1);
-    const calledWith = letterBuilder.mock.calls[0].arguments[0];
+    assert.equal(getLetter.mock.calls.length, 1);
+    const calledWith = getLetter.mock.calls[0].arguments[0];
 
     assert.deepEqual(calledWith, {
         id: "LETTER-123",
-        type: "pdf",
-        schema: templates.tx45.sections[templates.tx45.routes.initial],
+        template: templates.tx45.sections[templates.tx45.routes.initial].schema,
         isPreview: true,
         letterData: { foo: "hello" },
     });
 
-    assert.deepEqual(result, { ok: true, previewData: calledWith });
-});
-
-test("generatePdfWithDeps(): unsupported letterType throws ValidationError with supportedTypes", async () => {
-    const { templates, logger, letterBuilder } = makeFixtures();
-
-    const payload = JSON.stringify({
-        letterType: "nope",
-        letterData: { foo: "x" },
-    });
-
-    await assert.rejects(
-        () => generatePdfWithDeps(payload, "L-1", { templates, logger, letterBuilder }),
-        (e) => {
-            assert.ok(e instanceof ValidationError);
-            assert.match(e.message, /Unsupported letterType: nope/);
-            assert.deepEqual(e.details, { supportedTypes: ["tx45"] });
-            return true;
-        }
-    );
+    assert.ok(Buffer.isBuffer(result));
+    assert.ok(result.length > 0);
 });
 
 test("generatePdfWithDeps(): template misconfigured throws ValidationError", async () => {
     const logger = { info: mock.fn() };
-    const letterBuilder = mock.fn(async () => ({ ok: true }));
-
-    const templates = {
-        tx45: {
-            inputSchema: { type: "object" },
-            routes: { initial: "missing" },
-            sections: { start: { sectionName: "StartSection" } },
-        },
+    const getLetter = mock.fn(async () => Buffer.from("%PDF-1.4\nfake\n"));
+    const letterBuilder = { getLetter };
+    const template = {
+        inputSchema: { type: "object" },
+        routes: { initial: "missing" },
+        sections: { start: { schema: { sectionName: "StartSection" } } },
     };
 
-    const payload = JSON.stringify({
+    const payload = {
         letterType: "tx45",
         letterData: { foo: "x" },
-        isPreview: false,
-    });
+        isPreview: false
+    };
 
     await assert.rejects(
-        () => generatePdfWithDeps(payload, "L-1", { templates, logger, letterBuilder }),
+        () => generatePdfWithDeps(payload, template,"L-1", { logger, letterBuilder }),
         /Template misconfigured/
     );
 });

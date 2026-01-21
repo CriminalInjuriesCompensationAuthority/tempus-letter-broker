@@ -1,0 +1,199 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Tempus Letter Broker
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Parameter for the environment
+    AllowedValues: ['dev', 'uat', 'stag', 'prod']
+  MoJCPAccountId:
+    Type: String
+    Default: '754256621582'
+    Description: Account ID of the MOJ CP Account
+  OnPremIpRange:
+    Type: String
+    Description: "The CIDR range for CICA's on premise"
+
+Mappings:
+  EnvironmentMap:
+    dev:
+      LogLevel: "info"
+      LetterQueueUrl: "https://sqs.eu-west-2.amazonaws.com/754256621582/cica-dev-team-dev-claim-criminal-injuries-letter-queue"
+      LetterQueueArn: "arn:aws:sqs:eu-west-2:754256621582:cica-dev-team-dev-claim-criminal-injuries-letter-queue"
+      LettersBucket: "cloud-platform-49a757c932e13a19705fe577179417e8"
+      KtaDocsBucket: "dev-kta-documents-bucket"
+      SubnetIdA: subnet-02f7ae7f6b1db987f
+      SubnetIdB: subnet-0a5e7b48efcb931ba
+      VpcId: vpc-0e42a25379fa895ec
+      KtaArn: arn:aws:iam::589450497571:role/dev-kta-service-access-role
+      secretsArn: arn:aws:secretsmanager:eu-west-2:589450497571:secret:tempus-letter-broker-secrets-dev-Pgcd3z
+    uat:
+      LogLevel: "info"
+      LetterQueueUrl: ""
+      LetterQueueArn: ""
+      LettersBucket: ""
+      KtaDocsBucket: ""
+      SubnetIdA: subnet-0fd3a560d90368fdc
+      SubnetIdB: subnet-078b2047045b77bb0
+      VpcId: vpc-0254c4e3ea99b07d1
+    stag:
+      LogLevel: "info"
+      LetterQueueUrl: ""
+      LetterQueueArn: ""
+      LettersBucket: ""
+      KtaDocsBucket: ""
+      SubnetIdA: subnet-02f7ae7f6b1db987f
+      SubnetIdB: subnet-0a5e7b48efcb931ba
+      VpcId: vpc-0e42a25379fa895ec
+    prod:
+      LogLevel: "info"
+      LetterQueueUrl: ""
+      LetterQueueArn: ""
+      LettersBucket: ""
+      KtaDocsBucket: ""
+      SubnetIdA: subnet-0d1fcbfc03a28f433
+      SubnetIdB: subnet-08c81bc6ffb13be3d
+      VpcId: vpc-010157aa3b29e0752
+
+Resources:
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: tempus-letter-broker
+      StageName: !Ref Environment
+      EndpointConfiguration: PRIVATE
+      Auth:
+        ResourcePolicy:
+          AwsAccountWhitelist:
+            - !Ref AWS::AccountId
+
+  LetterBrokerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: tempus-letter-broker
+      PackageType: Image
+      Description: Call the AWS Lambda API
+      MemorySize: 1024
+      Timeout: 30
+      Environment:
+        Variables:
+          LOG_LEVEL: !FindInMap [EnvironmentMap, !Ref Environment, LogLevel]
+          LETTER_QUEUE_URL: !FindInMap [EnvironmentMap, !Ref Environment, LetterQueueUrl]
+          LETTER_QUEUE_ARN: !FindInMap [EnvironmentMap, !Ref Environment, LetterQueueArn]
+          LETTERS_BUCKET: !FindInMap [EnvironmentMap, !Ref Environment, LettersBucket]
+          KTA_DOCS_BUCKET: !FindInMap [EnvironmentMap, !Ref Environment, KtaDocsBucket]
+          SECRETS_ARN: !FindInMap [EnvironmentMap, !Ref Environment, secretsArn]
+          PUPPETEER_CACHE_DIR: /tmp/puppeteer
+      Events:
+        DeleteUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /letters/{userId}
+            Method: DELETE
+
+        DeleteCase:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /letters/{userId}/{caseReferenceNumber}
+            Method: DELETE
+
+        DeleteLetter:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /letters/{userId}/{caseReferenceNumber}/{letterId}
+            Method: DELETE
+
+        SendLetter:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /letters/{userId}/{caseReferenceNumber}/{letterId}/send
+            Method: POST
+
+        PreviewLetter:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /letters/{userId}/{caseReferenceNumber}/{letterId}/pdf
+            Method: POST
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambda_ReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+        - Statement:
+            - Sid: LetterBrokerToLetterService
+              Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:GetQueueAttributes
+                - sqs:GetQueueUrl
+                - s3:ListBucket
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  'aws:ResourceAccount': !Ref MoJCPAccountId
+            - Sid: LetterBrokerToKta
+              Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+                - s3:ListBucket
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:GenerateDataKey
+              Resource: "*"
+            - Sid: TempusBrokerFunctionSecretsPolicy
+              Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - secretsmanager:GetSecretValue
+                - kms:Encrypt
+                - kms:Decrypt
+                - kms:ReEncrypt*
+                - kms:GenerateDataKey*
+                - kms:DescribeKey
+              Resource: '*'
+            - Sid: TempusBrokerFunctionCloudWatchPolicy
+              Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+              Resource: '*'
+      Tracing: Active
+      VpcConfig:
+        SubnetIds:
+          [
+            !FindInMap [EnvironmentMap, !Ref Environment, SubnetIdA],
+            !FindInMap [EnvironmentMap, !Ref Environment, SubnetIdB],
+          ]
+        SecurityGroupIds: [!Ref tempusLetterBrokerSecurityGroup]
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: latest
+
+  tempusLetterBrokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub
+        - 'TempusLetterBrokerSecurityGroup${Env}'
+        - Env: !Ref Environment
+      GroupDescription: Security group for the tempus letter broker lamdba function to allow communications out to Tempus.
+      VpcId: !FindInMap [EnvironmentMap, !Ref Environment, VpcId]
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: '0.0.0.0/0'
+
+Outputs:
+  ApiBaseUrl:
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
