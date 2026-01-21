@@ -51,7 +51,7 @@ export async function handleSend(event) {
 
     logger.info("Handling send letter", { userId, caseReferenceNumber, letterId });
 
-    const body = parseAndValidateBody(event.body);
+    const { body, template } = parseAndValidateBody(event.body);
 
     const letterDocument = {
         userId,
@@ -63,6 +63,8 @@ export async function handleSend(event) {
         userEmail: body.userEmail || null,
         userPhone: body.userPhone || null,
         createdAt: new Date().toISOString(),
+        expiresAt: body.expiryDate,
+        template
     };
 
     const { key } = await putLetterJson({
@@ -86,9 +88,9 @@ export async function handlePreview(event) {
 
     logger.info("Handling generate preview PDF", { userId, caseReferenceNumber, letterId });
 
-    const body = parseAndValidateBody(event.body, letterId);
+    const { body, template }  = parseAndValidateBody(event.body);
 
-    const pdfBuffer = await generatePdf(body);
+    const pdfBuffer = await generatePdf(body, template, letterId);
 
     const { uri } = await putPreviewPdf({
         caseReferenceNumber,
