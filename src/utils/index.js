@@ -80,7 +80,7 @@ export const parseAndValidateBodyWithDeps = (
     }
 
     const key = String(letterType).toLowerCase();
-    const template = structuredClone(templates[key]);
+    const template = templates[key];
 
     if (!template) {
         throw new ValidationError(`Unsupported letterType: ${letterType}`, {
@@ -88,6 +88,7 @@ export const parseAndValidateBodyWithDeps = (
         });
     }
 
+    //ToDo: Compile schemas once, not ad hoc - better performance
     const schema = template?.inputSchema;
     if (!schema) {
         throw new ValidationError(`Template error. No input schema found for template: ${key}`);
@@ -98,7 +99,9 @@ export const parseAndValidateBodyWithDeps = (
         throw new ValidationError("Letter validation failed", validate.errors);
     }
 
-    return { body, template };
+    const templateInstance = structuredClone(template);
+
+    return { body, template: templateInstance };
 };
 
 /* c8 ignore next 5 */
