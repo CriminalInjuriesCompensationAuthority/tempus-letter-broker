@@ -141,7 +141,7 @@ export const generatePdfWithDeps = async (
     }
 
     const previewData = {
-        id: letterId,
+        letterId,
         template: letterSchema,
         isPreview: isPreview === true,
         letterData
