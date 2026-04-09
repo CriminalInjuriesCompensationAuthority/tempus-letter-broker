@@ -334,7 +334,7 @@ test("generatePdfWithDeps(): logs and calls letterBuilder with expected previewD
     const calledWith = getLetter.mock.calls[0].arguments[0];
 
     assert.deepEqual(calledWith, {
-        id: "LETTER-123",
+        letterId: "LETTER-123",
         template: templates.tx45.sections[templates.tx45.routes.initial].schema,
         isPreview: true,
         letterData: { foo: "hello" },
