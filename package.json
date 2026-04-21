@@ -26,8 +26,8 @@
     "ajv-errors": "^3.0.0",
     "ajv-formats": "^2.1.1",
     "pino": "^9.0.0",
-    "q-letter-transformer": "github:CriminalInjuriesCompensationAuthority/q-letter-transformer#bp-fix/nunjucks-root",
-    "q-templates-review": "github:CriminalInjuriesCompensationAuthority/q-templates-review#bp-feature/up-to-date-branch"
+    "q-letter-transformer": "github:CriminalInjuriesCompensationAuthority/q-letter-transformer#bp-feature/interpolator-fix",
+    "q-templates-review": "github:CriminalInjuriesCompensationAuthority/q-templates-review#bp/new-post-apply-service"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
