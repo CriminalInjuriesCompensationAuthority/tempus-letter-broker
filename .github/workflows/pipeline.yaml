@@ -70,18 +70,43 @@ jobs:
         run: npm run openapi:validate
 
   build-deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: github.event_name == 'push' && contains(fromJSON('["develop","uat","staging","main"]'), github.ref_name)
     needs:
       - lint
       - tests
       - validate
     runs-on: ubuntu-latest
     environment:
-      name: dev
+      name: ${{ github.ref_name == 'develop' && 'dev' || github.ref_name == 'uat' && 'uat' || github.ref_name == 'staging' && 'staging' || 'prod' }}
     permissions:
       id-token: write
       contents: read
     steps:
+      - name: Set deployment config
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            develop)
+              echo "DEPLOY_ENV=dev" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-dev" >> "$GITHUB_ENV"
+              ;;
+            uat)
+              echo "DEPLOY_ENV=uat" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-uat" >> "$GITHUB_ENV"
+              ;;
+            staging)
+              echo "DEPLOY_ENV=staging" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-staging" >> "$GITHUB_ENV"
+              ;;
+            main)
+              echo "DEPLOY_ENV=prod" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-prod" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unsupported branch: ${GITHUB_REF_NAME}"
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -115,4 +140,4 @@ jobs:
       - run: sam build --use-container
 
       # deploy
-      - run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name tempus-letter-broker --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --region eu-west-2 --profile assumed-role --parameter-overrides Environment=dev OnPremIpRange=192.168.0.1/16
+      - run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name "$STACK_NAME" --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --region eu-west-2 --profile assumed-role --parameter-overrides Environment="$DEPLOY_ENV" OnPremIpRange="192.168.0.1/16"
