@@ -27,7 +27,7 @@
     "ajv-formats": "^2.1.1",
     "pino": "^9.0.0",
     "q-letter-transformer": "github:CriminalInjuriesCompensationAuthority/q-letter-transformer#bp-feature/interpolator-fix",
-    "q-templates-review": "github:CriminalInjuriesCompensationAuthority/q-templates-review#bp-rc-changes"
+    "q-templates-review": "github:CriminalInjuriesCompensationAuthority/q-templates-review#post-apply-ithc"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
