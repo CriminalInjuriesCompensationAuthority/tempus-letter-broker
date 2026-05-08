@@ -1,8 +1,12 @@
-name: CI
+name: Tempus Letter Broker deployment
 
 on:
   push:
-  pull_request:
+    branches: ["**"]
+    paths-ignore:
+      - '**/*.md'
+      - '**/LICENSE'
+      - '**/.gitignore'
 
 permissions:
   contents: read
@@ -27,7 +31,7 @@ jobs:
       - name: ESLint
         run: npm run lint
 
-  unit_tests:
+  tests:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
@@ -46,20 +50,90 @@ jobs:
       - name: node:test
         run: node --test
 
-  #openapi_schema:
-    #name: OpenAPI schema validation
-    #runs-on: ubuntu-latest
-    #steps:
-      #- name: Checkout
-        #uses: actions/checkout@v4
+  validate:
+    name: Validate openapi contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      #- name: Setup Python
-        #uses: actions/setup-python@v5
-        #with:
-          #python-version: "3.11"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
 
-      #- name: Install Schemathesis
-        #run: python -m pip install --upgrade pip schemathesis
+      - name: Install deps
+        run: npm ci
 
-      #- name: Validate OpenAPI document
-        #run: schemathesis run ./openapi/openapi.yaml
+      - name: validate
+        run: npm run openapi:validate
+
+  build-deploy:
+    if: github.event_name == 'push' && contains(fromJSON('["develop","uat","staging"]'), github.ref_name)
+    needs:
+      - lint
+      - tests
+      - validate
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref_name == 'uat' && 'uat' || github.ref_name == 'staging' && 'staging' || 'dev' }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Set deployment config
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            develop)
+              echo "DEPLOY_ENV=dev" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-dev" >> "$GITHUB_ENV"
+              ;;
+            uat)
+              echo "DEPLOY_ENV=uat" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-uat" >> "$GITHUB_ENV"
+              ;;
+            staging)
+              echo "DEPLOY_ENV=stag" >> "$GITHUB_ENV"
+              echo "STACK_NAME=tempus-letter-broker-staging" >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "Unsupported branch: ${GITHUB_REF_NAME}"
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.3'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: GitHubWorkflow
+          aws-region: eu-west-2
+
+      # assume the relevant role via AWS Profile
+      - run: sh ./.github/scripts/assume-role-profile.sh
+        env:
+          ROLE_ARN: ${{ secrets.ASSUMED_ROLE }}
+
+      # setup docker
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v3
+
+      # sam validate
+      - run: sam validate --lint
+
+      # sam build
+      - run: sam build --use-container
+
+      # deploy
+      - run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --stack-name "$STACK_NAME" --resolve-s3 --resolve-image-repos --capabilities CAPABILITY_IAM --region eu-west-2 --profile assumed-role --parameter-overrides Environment="$DEPLOY_ENV" OnPremIpRange="192.168.0.1/16"

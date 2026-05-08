@@ -49,7 +49,7 @@ export const parseAndValidateBodyWithDeps = (
         throw new ValidationError("Invalid JSON in request body");
     }
 
-    const { letterType, letterData, contactPreference, userEmail, userPhone } = body;
+    const { letterType, letterData, contactPreference, userEmail, userPhone, isPreview } = body;
 
     if (typeof letterType !== "string" || !letterType.trim()) {
         throw new ValidationError("letterType is required");
@@ -59,32 +59,39 @@ export const parseAndValidateBodyWithDeps = (
         throw new ValidationError("letterData is required");
     }
 
-    if (contactPreference !== "E" && contactPreference !== "T") {
-        throw new ValidationError(
-            "contactPreference must be 'E' (email) or 'T' (text)"
-        );
-    }
+    if (!isPreview) {
+        if (contactPreference !== "E" && contactPreference !== "T" && !isPreview) {
+            throw new ValidationError(
+                "contactPreference must be 'E' (email) or 'T' (text)"
+            );
+        }
 
-    if (contactPreference === "E" && !userEmail) {
-        throw new ValidationError(
-            "userEmail is required when contactPreference is 'E'"
-        );
-    }
+        if (contactPreference === "E" && !userEmail) {
+            throw new ValidationError(
+                "userEmail is required when contactPreference is 'E'"
+            );
+        }
 
-    if (contactPreference === "T" && !userPhone) {
-        throw new ValidationError(
-            "userPhone is required when contactPreference is 'T'"
-        );
+        if (contactPreference === "T" && !userPhone) {
+            throw new ValidationError(
+                "userPhone is required when contactPreference is 'T'"
+            );
+        }
     }
 
     const key = String(letterType).toLowerCase();
     const template = templates[key];
 
-    const schema = template?.inputSchema;
-    if (!schema) {
+    if (!template) {
         throw new ValidationError(`Unsupported letterType: ${letterType}`, {
             supportedTypes: Object.keys(templates),
         });
+    }
+
+    //ToDo: Compile schemas once, not ad hoc - better performance
+    const schema = template?.inputSchema;
+    if (!schema) {
+        throw new ValidationError(`Template error. No input schema found for template: ${key}`);
     }
 
     const validate = ajv.compile(schema);
@@ -92,7 +99,9 @@ export const parseAndValidateBodyWithDeps = (
         throw new ValidationError("Letter validation failed", validate.errors);
     }
 
-    return body;
+    const templateInstance = structuredClone(template);
+
+    return { body, template: templateInstance };
 };
 
 /* c8 ignore next 5 */
@@ -103,21 +112,14 @@ export const parseAndValidateBody = (bodyString) =>
     });
 
 export const generatePdfWithDeps = async (
-    bodyString,
+    body,
+    template,
     letterId,
     {
         logger = defaultLogger,
-        letterBuilder = defaultLetterBuilder,
-        templates = supportedSchema,
+        letterBuilder = defaultLetterBuilder
     } = {}
 ) => {
-    let body;
-    try {
-        body = JSON.parse(bodyString);
-    } catch {
-        throw new ValidationError("Invalid JSON in request body");
-    }
-
     const { letterType, letterData, isPreview } = body;
 
     if (typeof letterType !== "string" || !letterType.trim()) {
@@ -133,35 +135,24 @@ export const generatePdfWithDeps = async (
         isPreview: isPreview === true,
     });
 
-    const key = String(letterType).toLowerCase();
-    const template = templates[key];
-
-    if (!template) {
-        throw new ValidationError(`Unsupported letterType: ${letterType}`, {
-            supportedTypes: Object.keys(templates),
-        });
-    }
-
-    const letterSchema = template.sections?.[template.routes?.initial];
+    const letterSchema = template.sections?.[template.routes?.initial]?.schema;
     if (!letterSchema) {
         throw new ValidationError(`Template misconfigured for letterType: ${letterType}`);
     }
 
     const previewData = {
-        id: letterId,
-        type: 'pdf',
-        schema: letterSchema,
+        letterId,
+        template: letterSchema,
         isPreview: isPreview === true,
         letterData
     };
 
-    return letterBuilder(previewData);
+    return letterBuilder.getLetter(previewData);
 };
 
 /* c8 ignore next 6 */
-export const generatePdf = async (bodyString, letterId) =>
-    generatePdfWithDeps(bodyString, letterId, {
+export const generatePdf = async (body, template, letterId) =>
+    generatePdfWithDeps(body, template, letterId, {
         logger: defaultLogger,
-        letterBuilder: defaultLetterBuilder,
-        templates: supportedSchema,
+        letterBuilder: defaultLetterBuilder()
     });

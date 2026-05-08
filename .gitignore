@@ -4,3 +4,4 @@ node_modules/
 coverage/
 .aws-sam/
 dist/
+stuff/
