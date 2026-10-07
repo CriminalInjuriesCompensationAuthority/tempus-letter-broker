@@ -27,6 +27,13 @@ export const handler = async (event, context) => {
             return errorResponse(400, err.message, "VALIDATION_ERROR", err.details);
         }
 
+        console.error("MASSIVE ERROR", {
+            requestId: context?.awsRequestId,
+            errName: err?.name,
+            errMessage: err?.message,
+            stack: err?.stack
+        });
+
         logger.error("Unexpected error", { error: err.message, stack: err.stack });
         return errorResponse(500, "Internal server error", "INTERNAL_ERROR");
     }

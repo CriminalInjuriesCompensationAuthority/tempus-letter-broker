@@ -1,7 +1,9 @@
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs"
 import { logger } from "../logger/index.js"
 
-const sqs = new SQSClient({});
+const sqs = new SQSClient({
+    region: 'eu-west-2'
+});
 
 async function sendMessage({ messageType, payload }) {
     const messageBody = {

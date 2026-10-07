@@ -2,16 +2,23 @@ import js from "@eslint/js";
 import globals from "globals";
 
 export default [
+    {
+        ignores: [
+            "**/coverage/**",
+            "**/node_modules/**",
+            "**/stuff/**",
+        ],
+    },
+
     js.configs.recommended,
 
     {
         files: ["**/*.js"],
-        ignores: ["coverage/**", "node_modules/**"],
         languageOptions: {
             ecmaVersion: "latest",
             sourceType: "module",
             globals: {
-                ...globals.node
+                ...globals.node,
             },
         },
         rules: {
