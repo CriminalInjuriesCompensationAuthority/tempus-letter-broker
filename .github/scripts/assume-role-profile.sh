@@ -1,7 +1,7 @@
 #/bin/bash
 tmpfile=/tmp/aws-session-file
 
-aws sts assume-role --duration-seconds 900 --role-arn $ROLE_ARN --role-session-name `whoami`-`date +%d%m%y`-session > $tmpfile
+aws sts assume-role --duration-seconds 900 --role-arn $ROLE_ARN --external-id $EXTERNAL_ID --role-session-name `whoami`-`date +%d%m%y`-session > $tmpfile
 
 AWS_ACCESS_KEY_ID=`cat $tmpfile|jq -c '.Credentials.AccessKeyId'|tr -d '"'`
 AWS_SECRET_ACCESS_KEY=`cat $tmpfile |jq -c '.Credentials.SecretAccessKey'|tr -d '"'`

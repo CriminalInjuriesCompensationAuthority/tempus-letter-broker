@@ -124,6 +124,7 @@ jobs:
       - run: sh ./.github/scripts/assume-role-profile.sh
         env:
           ROLE_ARN: ${{ secrets.ASSUMED_ROLE }}
+          EXTERNAL_ID: ${{ secrets.EXTERNAL_ID }}
 
       # setup docker
       - uses: docker/setup-buildx-action@v3
