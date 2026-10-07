@@ -196,6 +196,36 @@ Resources:
           ToPort: 65535
           CidrIp: '0.0.0.0/0'
 
+  LetterTemplateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+      VersioningConfiguration:
+        Status: Enabled
+
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+
 Outputs:
   ApiBaseUrl:
     Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+
+  LetterTemplateBucketName:
+    Description: S3 bucket containing published correspondence templates
+    Value: !Ref LetterTemplateBucket
+
+  LetterTemplateBucketArn:
+    Description: ARN of the S3 bucket containing published correspondence templates
+    Value: !GetAtt LetterTemplateBucket.Arn
